@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import confetti from 'canvas-confetti';
-import { Trophy, Zap, Ghost, Globe, Play, RotateCcw, Pause, Settings, Activity } from 'lucide-react';
+import { Trophy, Play, RotateCcw, Pause, Settings, Activity, ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 
 // --- Constants ---
 const CELL_SIZE = 20;
@@ -34,7 +34,10 @@ const GameCanvas: React.FC = () => {
     const foodRef = useRef<{ x: number; y: number; type: FoodType }>({ x: 15, y: 10, type: 'NORMAL' });
     const speedRef = useRef(INITIAL_SPEED);
     const lastRenderTimeRef = useRef(0);
-    const powerUpTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const powerUpTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Touch Handling State
+    const touchStartRef = useRef<Point | null>(null);
 
     // --- Audio ---
     const playSound = useCallback((type: 'eat' | 'die' | 'powerup' | 'click') => {
@@ -132,6 +135,15 @@ const GameCanvas: React.FC = () => {
         playSound('click');
     };
 
+    const handleDirectionChange = (newDir: Point) => {
+        const currentDir = directionRef.current;
+        // Prevent 180 degree turns
+        if (newDir.x !== 0 && currentDir.x !== 0) return;
+        if (newDir.y !== 0 && currentDir.y !== 0) return;
+        
+        nextDirectionRef.current = newDir;
+    };
+
     // --- Controls ---
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -144,17 +156,43 @@ const GameCanvas: React.FC = () => {
             if (gameState !== 'PLAYING') return;
             
             const { key } = e;
-            const currentDir = directionRef.current;
-
-            if (key === 'ArrowUp' && currentDir.y === 0) nextDirectionRef.current = { x: 0, y: -1 };
-            if (key === 'ArrowDown' && currentDir.y === 0) nextDirectionRef.current = { x: 0, y: 1 };
-            if (key === 'ArrowLeft' && currentDir.x === 0) nextDirectionRef.current = { x: -1, y: 0 };
-            if (key === 'ArrowRight' && currentDir.x === 0) nextDirectionRef.current = { x: 1, y: 0 };
+            
+            if (key === 'ArrowUp') handleDirectionChange({ x: 0, y: -1 });
+            if (key === 'ArrowDown') handleDirectionChange({ x: 0, y: 1 });
+            if (key === 'ArrowLeft') handleDirectionChange({ x: -1, y: 0 });
+            if (key === 'ArrowRight') handleDirectionChange({ x: 1, y: 0 });
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [gameState]);
+
+    // --- Touch Controls ---
+    const handleTouchStart = (e: React.TouchEvent) => {
+        const touch = e.touches[0];
+        touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+    };
+
+    const handleTouchEnd = (e: React.TouchEvent) => {
+        if (!touchStartRef.current) return;
+        const touch = e.changedTouches[0];
+        const dx = touch.clientX - touchStartRef.current.x;
+        const dy = touch.clientY - touchStartRef.current.y;
+        
+        // Minimum swipe distance
+        if (Math.abs(dx) < 30 && Math.abs(dy) < 30) return;
+
+        if (Math.abs(dx) > Math.abs(dy)) {
+            // Horizontal
+            if (dx > 0) handleDirectionChange({ x: 1, y: 0 }); // Right
+            else handleDirectionChange({ x: -1, y: 0 }); // Left
+        } else {
+            // Vertical
+            if (dy > 0) handleDirectionChange({ x: 0, y: 1 }); // Down
+            else handleDirectionChange({ x: 0, y: -1 }); // Up
+        }
+        touchStartRef.current = null;
+    };
 
     // --- Game Loop ---
     useEffect(() => {
@@ -311,7 +349,11 @@ const GameCanvas: React.FC = () => {
                     </div>
 
                     {/* Canvas Container */}
-                    <div className="relative group rounded-xl overflow-hidden border border-emerald-900 bg-[#020604] shadow-[0_0_50px_rgba(16,185,129,0.05)]">
+                    <div 
+                        className="relative group rounded-xl overflow-hidden border border-emerald-900 bg-[#020604] shadow-[0_0_50px_rgba(16,185,129,0.05)] touch-none"
+                        onTouchStart={handleTouchStart}
+                        onTouchEnd={handleTouchEnd}
+                    >
                         <canvas
                             ref={canvasRef}
                             width={GRID_WIDTH * CELL_SIZE}
@@ -319,7 +361,7 @@ const GameCanvas: React.FC = () => {
                             className="w-full h-auto block opacity-90"
                         />
                         
-                        {/* Scanline Overlay */}
+                        {/* Scanline Overlay - Pointer Events must pass through to handle swipe, but we put handlers on parent div so it's fine */}
                         <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] z-10 pointer-events-none bg-[length:100%_2px,3px_100%] opacity-20"></div>
 
                         {/* Start/Paused Screen Overlay */}
@@ -338,10 +380,43 @@ const GameCanvas: React.FC = () => {
                         )}
                     </div>
 
+                    {/* Mobile Controls (Visible on small screens) */}
+                    <div className="lg:hidden flex justify-center py-4">
+                        <div className="grid grid-cols-3 gap-2">
+                             <div />
+                             <button
+                                className="w-14 h-14 bg-emerald-900/30 border border-emerald-600/50 rounded flex items-center justify-center active:bg-emerald-600/50 transition-colors"
+                                onPointerDown={(e) => { e.preventDefault(); handleDirectionChange({ x: 0, y: -1 }); }}
+                             >
+                                <ChevronUp className="text-emerald-400" />
+                             </button>
+                             <div />
+                             <button
+                                className="w-14 h-14 bg-emerald-900/30 border border-emerald-600/50 rounded flex items-center justify-center active:bg-emerald-600/50 transition-colors"
+                                onPointerDown={(e) => { e.preventDefault(); handleDirectionChange({ x: -1, y: 0 }); }}
+                             >
+                                <ChevronLeft className="text-emerald-400" />
+                             </button>
+                             <button
+                                className="w-14 h-14 bg-emerald-900/30 border border-emerald-600/50 rounded flex items-center justify-center active:bg-emerald-600/50 transition-colors"
+                                onPointerDown={(e) => { e.preventDefault(); handleDirectionChange({ x: 0, y: 1 }); }}
+                             >
+                                <ChevronDown className="text-emerald-400" />
+                             </button>
+                             <button
+                                className="w-14 h-14 bg-emerald-900/30 border border-emerald-600/50 rounded flex items-center justify-center active:bg-emerald-600/50 transition-colors"
+                                onPointerDown={(e) => { e.preventDefault(); handleDirectionChange({ x: 1, y: 0 }); }}
+                             >
+                                <ChevronRight className="text-emerald-400" />
+                             </button>
+                        </div>
+                    </div>
+
                     {/* Controls Hint */}
                     <div className="flex justify-between text-xs text-emerald-800 uppercase font-bold tracking-widest">
                         <div className="flex gap-4">
-                            <span>↹ ARROWS TO MOVE</span>
+                            <span className="hidden lg:inline">↹ ARROWS TO MOVE</span>
+                            <span className="lg:hidden">SWIPE TO MOVE</span>
                             <span>␣ SPACE TO PAUSE</span>
                         </div>
                         <div className="flex gap-4">
