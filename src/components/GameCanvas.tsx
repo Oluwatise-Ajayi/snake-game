@@ -4,8 +4,8 @@ import { Trophy, Play, RotateCcw, Pause, Settings, Activity, ChevronUp, ChevronD
 
 // --- Constants ---
 const CELL_SIZE = 20;
-const GRID_WIDTH = 40; // 800px
-const GRID_HEIGHT = 25; // 500px
+const GRID_WIDTH = 30; // 600px
+const GRID_HEIGHT = 20; // 400px
 const INITIAL_SPEED = 100;
 const POWERUP_DURATION = 7000;
 
@@ -350,7 +350,7 @@ const GameCanvas: React.FC = () => {
 
                     {/* Canvas Container */}
                     <div 
-                        className="relative group rounded-xl overflow-hidden border border-emerald-900 bg-[#020604] shadow-[0_0_50px_rgba(16,185,129,0.05)] touch-none"
+                        className="relative group rounded-xl overflow-hidden border border-emerald-900 bg-[#020604] shadow-[0_0_50px_rgba(16,185,129,0.05)] touch-none max-w-3xl mx-auto"
                         onTouchStart={handleTouchStart}
                         onTouchEnd={handleTouchEnd}
                     >
