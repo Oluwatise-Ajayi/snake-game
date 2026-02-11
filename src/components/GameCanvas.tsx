@@ -4,8 +4,8 @@ import { Trophy, Play, RotateCcw, Pause, Settings, Activity, ChevronUp, ChevronD
 
 // --- Constants ---
 const CELL_SIZE = 20;
-const GRID_WIDTH = 30; // 600px
-const GRID_HEIGHT = 20; // 400px
+const GRID_WIDTH = 40; // 800px
+const GRID_HEIGHT = 25; // 500px
 const INITIAL_SPEED = 100;
 const POWERUP_DURATION = 7000;
 
