@@ -1,19 +1,24 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import confetti from 'canvas-confetti';
-import { Trophy, Zap, Ghost, Globe } from 'lucide-react';
+import { Trophy, Zap, Ghost, Globe, Play, RotateCcw, Pause, Settings, Activity } from 'lucide-react';
 
 // --- Constants ---
 const CELL_SIZE = 20;
 const GRID_WIDTH = 30; // 600px
 const GRID_HEIGHT = 20; // 400px
-const INITIAL_SPEED = 100; // ms per move
-const SPEED_BOOST_FACTOR = 0.85; // 15% faster (smaller interval)
-const POWERUP_DURATION = 7000; // 7s
+const INITIAL_SPEED = 100;
+const POWERUP_DURATION = 7000;
 
 type Point = { x: number; y: number };
-type GameState = 'START' | 'PLAYING' | 'GAME_OVER';
+type GameState = 'START' | 'PLAYING' | 'PAUSED' | 'GAME_OVER';
 type PowerUpType = 'GHOST' | 'WRAP' | null;
 type FoodType = 'NORMAL' | 'GHOST' | 'WRAP';
+
+// Mock Leaderboard Data
+const MOCK_LEADER_BOARD = [
+    { name: 'ULTRA_SNK', score: 4850 },
+    { name: 'COLD_BLOOD', score: 3200 },
+];
 
 const GameCanvas: React.FC = () => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -22,17 +27,17 @@ const GameCanvas: React.FC = () => {
     const [highScore, setHighScore] = useState(() => parseInt(localStorage.getItem('neon-snake-high-score') || '0'));
     const [activePowerUp, setActivePowerUp] = useState<PowerUpType>(null);
 
-    // Game Mutable State (Ref for performance in loop)
+    // Game Mutable State
     const snakeRef = useRef<Point[]>([{ x: 10, y: 10 }]);
-    const directionRef = useRef<Point>({ x: 1, y: 0 }); // Moving right
+    const directionRef = useRef<Point>({ x: 1, y: 0 });
     const nextDirectionRef = useRef<Point>({ x: 1, y: 0 });
     const foodRef = useRef<{ x: number; y: number; type: FoodType }>({ x: 15, y: 10, type: 'NORMAL' });
     const speedRef = useRef(INITIAL_SPEED);
     const lastRenderTimeRef = useRef(0);
     const powerUpTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-    // --- Sound Effects (Simple Oscillator Fallback for clean "No Assets" approach) ---
-    const playSound = useCallback((type: 'eat' | 'die' | 'powerup') => {
+    // --- Audio ---
+    const playSound = useCallback((type: 'eat' | 'die' | 'powerup' | 'click') => {
         const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
         if (!AudioContext) return;
         const ctx = new AudioContext();
@@ -43,29 +48,35 @@ const GameCanvas: React.FC = () => {
 
         const now = ctx.currentTime;
         if (type === 'eat') {
-            osc.frequency.setValueAtTime(600, now);
-            osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1);
-            gain.gain.setValueAtTime(0.5, now);
-            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+            osc.frequency.setValueAtTime(800, now);
+            osc.frequency.exponentialRampToValueAtTime(1600, now + 0.05);
+            gain.gain.setValueAtTime(0.3, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
             osc.start(now);
-            osc.stop(now + 0.1);
+            osc.stop(now + 0.05);
         } else if (type === 'die') {
             osc.type = 'sawtooth';
-            osc.frequency.setValueAtTime(200, now);
-            osc.frequency.linearRampToValueAtTime(50, now + 0.3);
+            osc.frequency.setValueAtTime(100, now);
+            osc.frequency.linearRampToValueAtTime(50, now + 0.5);
             gain.gain.setValueAtTime(0.5, now);
-            gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
-            osc.start(now);
-            osc.stop(now + 0.3);
-        } else if (type === 'powerup') {
-            osc.type = 'square';
-            osc.frequency.setValueAtTime(400, now);
-            osc.frequency.linearRampToValueAtTime(800, now + 0.1);
-            osc.frequency.linearRampToValueAtTime(1200, now + 0.2);
-            gain.gain.setValueAtTime(0.3, now);
             gain.gain.linearRampToValueAtTime(0.01, now + 0.5);
             osc.start(now);
             osc.stop(now + 0.5);
+        } else if (type === 'powerup') {
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(400, now);
+            osc.frequency.linearRampToValueAtTime(1200, now + 0.2);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
+            osc.start(now);
+            osc.stop(now + 0.2);
+        } else if (type === 'click') {
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(800, now);
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.05);
+            osc.start(now);
+            osc.stop(now + 0.05);
         }
     }, []);
 
@@ -73,8 +84,8 @@ const GameCanvas: React.FC = () => {
     const spawnFood = () => {
         let type: FoodType = 'NORMAL';
         const rand = Math.random();
-        if (rand > 0.85) type = 'GHOST'; // 15% chance
-        else if (rand > 0.70) type = 'WRAP';  // 15% chance
+        if (rand > 0.85) type = 'GHOST';
+        else if (rand > 0.70) type = 'WRAP';
         
         const newFood = {
             x: Math.floor(Math.random() * GRID_WIDTH),
@@ -88,16 +99,12 @@ const GameCanvas: React.FC = () => {
         if (!type) return;
         setActivePowerUp(type);
         playSound('powerup');
-        
         if (powerUpTimeoutRef.current) clearTimeout(powerUpTimeoutRef.current);
-        
-        powerUpTimeoutRef.current = setTimeout(() => {
-            setActivePowerUp(null);
-        }, POWERUP_DURATION);
+        powerUpTimeoutRef.current = setTimeout(() => setActivePowerUp(null), POWERUP_DURATION);
     };
 
     const resetGame = () => {
-        snakeRef.current = [{ x: 10, y: 10 }];
+        snakeRef.current = [{ x: 5, y: 10 }, { x: 4, y: 10 }, { x: 3, y: 10 }]; // Head + Tail
         directionRef.current = { x: 1, y: 0 };
         nextDirectionRef.current = { x: 1, y: 0 };
         setScore(0);
@@ -105,6 +112,7 @@ const GameCanvas: React.FC = () => {
         speedRef.current = INITIAL_SPEED;
         setActivePowerUp(null);
         spawnFood();
+        playSound('click');
         if (powerUpTimeoutRef.current) clearTimeout(powerUpTimeoutRef.current);
     };
 
@@ -114,24 +122,30 @@ const GameCanvas: React.FC = () => {
         if (score > highScore) {
             setHighScore(score);
             localStorage.setItem('neon-snake-high-score', score.toString());
-            confetti({
-                particleCount: 150,
-                spread: 70,
-                origin: { y: 0.6 },
-                colors: ['#0ff', '#f0f', '#ff0'] // Neon colors
-            });
+            confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#4ade80', '#22c55e', '#ffffff'] });
         }
+    };
+
+    const togglePause = () => {
+        if (gameState === 'PLAYING') setGameState('PAUSED');
+        else if (gameState === 'PAUSED') setGameState('PLAYING');
+        playSound('click');
     };
 
     // --- Controls ---
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.code === 'Space') {
+                if (gameState === 'GAME_OVER' || gameState === 'START') resetGame();
+                else togglePause();
+                return;
+            }
+
             if (gameState !== 'PLAYING') return;
             
             const { key } = e;
             const currentDir = directionRef.current;
 
-            // Prevent reversing direction
             if (key === 'ArrowUp' && currentDir.y === 0) nextDirectionRef.current = { x: 0, y: -1 };
             if (key === 'ArrowDown' && currentDir.y === 0) nextDirectionRef.current = { x: 0, y: 1 };
             if (key === 'ArrowLeft' && currentDir.x === 0) nextDirectionRef.current = { x: -1, y: 0 };
@@ -151,19 +165,14 @@ const GameCanvas: React.FC = () => {
         const loop = (time: number) => {
             const timeSinceLastRender = time - lastRenderTimeRef.current;
             
-            // Move update
             if (timeSinceLastRender > speedRef.current) {
                 lastRenderTimeRef.current = time;
-                
-                // Update direction
                 directionRef.current = nextDirectionRef.current;
+                
                 const head = snakeRef.current[0];
-                let newHead = {
-                    x: head.x + directionRef.current.x,
-                    y: head.y + directionRef.current.y
-                };
+                let newHead = { x: head.x + directionRef.current.x, y: head.y + directionRef.current.y };
 
-                // Collision: Walls
+                // Walls
                 if (activePowerUp === 'WRAP') {
                     if (newHead.x < 0) newHead.x = GRID_WIDTH - 1;
                     if (newHead.x >= GRID_WIDTH) newHead.x = 0;
@@ -176,7 +185,7 @@ const GameCanvas: React.FC = () => {
                     }
                 }
 
-                // Collision: Self
+                // Self Collision
                 if (activePowerUp !== 'GHOST') {
                     for (let part of snakeRef.current) {
                         if (newHead.x === part.x && newHead.y === part.y) {
@@ -186,79 +195,81 @@ const GameCanvas: React.FC = () => {
                     }
                 }
 
-                // Move Snake
                 const newSnake = [newHead, ...snakeRef.current];
                 
-                // Check Food
                 if (newHead.x === foodRef.current.x && newHead.y === foodRef.current.y) {
                     playSound('eat');
-                    setScore(s => s + 10);
-                    
-                    // Trigger Powerups
+                    setScore(s => s + 50);
                     if (foodRef.current.type === 'GHOST') activatePowerUp('GHOST');
                     if (foodRef.current.type === 'WRAP') activatePowerUp('WRAP');
-
                     spawnFood();
-                    // Don't pop tail (grow)
                 } else {
-                    newSnake.pop(); // Remove tail
+                    newSnake.pop();
                 }
 
                 snakeRef.current = newSnake;
             }
 
-            // Draw
+            // --- Render ---
             const ctx = canvasRef.current?.getContext('2d');
             if (ctx) {
-                // Clear
-                ctx.fillStyle = '#050505'; // Dark bg
+                // Background
+                ctx.fillStyle = '#020604'; // Very Dark Green/Black
                 ctx.fillRect(0, 0, GRID_WIDTH * CELL_SIZE, GRID_HEIGHT * CELL_SIZE);
 
-                // Grid (Subtle)
-                ctx.strokeStyle = '#111';
+                // Grid Lines
+                ctx.strokeStyle = '#064e3b'; // Emerald-900 (Dark Green)
                 ctx.lineWidth = 1;
-                for (let i = 0; i <= GRID_WIDTH; i++) {
+                for (let i = 1; i < GRID_WIDTH; i++) {
                     ctx.beginPath();
                     ctx.moveTo(i * CELL_SIZE, 0);
                     ctx.lineTo(i * CELL_SIZE, GRID_HEIGHT * CELL_SIZE);
                     ctx.stroke();
                 }
-                for (let j = 0; j <= GRID_HEIGHT; j++) {
+                for (let j = 1; j < GRID_HEIGHT; j++) {
                     ctx.beginPath();
                     ctx.moveTo(0, j * CELL_SIZE);
                     ctx.lineTo(GRID_WIDTH * CELL_SIZE, j * CELL_SIZE);
                     ctx.stroke();
                 }
 
-                // Draw Snake
+                // Border Highlight
+                const borderColor = activePowerUp === 'WRAP' ? '#ec4899' : '#10b981';
+                ctx.strokeStyle = borderColor;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(1, 1, GRID_WIDTH * CELL_SIZE - 2, GRID_HEIGHT * CELL_SIZE - 2);
+
+                // Snake
                 snakeRef.current.forEach((part, index) => {
-                    let color = index === 0 ? '#0ff' : `rgba(0, 255, 255, ${1 - index / snakeRef.current.length})`; 
-                    
-                    if (activePowerUp === 'GHOST') {
-                        color = index === 0 ? '#60a5fa' : `rgba(96, 165, 250, 0.4)`; // Blue ghost
-                    } else if (activePowerUp === 'WRAP') {
-                        color = index === 0 ? '#f472b6' : `rgba(244, 114, 182, ${1 - index / snakeRef.current.length})`; // Pink wrap
-                    }
+                    let color = index === 0 ? '#4ade80' : '#22c55e'; // Bright Green Head, Green Body
+                    if (activePowerUp === 'GHOST') color = index === 0 ? '#60a5fa' : '#3b82f6';
+                    if (activePowerUp === 'WRAP') color = index === 0 ? '#f472b6' : '#db2777';
 
                     ctx.fillStyle = color;
-                    ctx.shadowBlur = index === 0 ? 15 : 5;
+                    ctx.shadowBlur = index === 0 ? 15 : 0;
                     ctx.shadowColor = color;
-                    ctx.fillRect(part.x * CELL_SIZE + 1, part.y * CELL_SIZE + 1, CELL_SIZE - 2, CELL_SIZE - 2);
-                    ctx.shadowBlur = 0; // Reset
+                    
+                    // Slightly rounded segments
+                    const padding = 1;
+                    ctx.fillRect(part.x * CELL_SIZE + padding, part.y * CELL_SIZE + padding, CELL_SIZE - padding * 2, CELL_SIZE - padding * 2);
+                    ctx.shadowBlur = 0;
                 });
 
-                // Draw Food (Token)
-                let foodColor = '#ff0'; // Yellow Standard
-                if (foodRef.current.type === 'GHOST') foodColor = '#3b82f6'; // Blue
-                if (foodRef.current.type === 'WRAP') foodColor = '#ec4899'; // Pink
-
+                // Food
+                let foodColor = '#facc15'; // Yellow
+                let glowColor = '#facc15';
+                if (foodRef.current.type === 'GHOST') { foodColor = '#60a5fa'; glowColor = '#60a5fa'; }
+                if (foodRef.current.type === 'WRAP') { foodColor = '#f472b6'; glowColor = '#f472b6'; }
+                
                 ctx.fillStyle = foodColor;
-                ctx.shadowBlur = 10;
-                ctx.shadowColor = foodColor;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = glowColor;
                 ctx.beginPath();
-                const foodX = foodRef.current.x * CELL_SIZE + CELL_SIZE / 2;
-                const foodY = foodRef.current.y * CELL_SIZE + CELL_SIZE / 2;
-                ctx.arc(foodX, foodY, CELL_SIZE / 3, 0, Math.PI * 2);
+                ctx.arc(
+                    foodRef.current.x * CELL_SIZE + CELL_SIZE / 2,
+                    foodRef.current.y * CELL_SIZE + CELL_SIZE / 2,
+                    CELL_SIZE / 3, 0, Math.PI * 2
+                );
                 ctx.fill();
                 ctx.shadowBlur = 0;
             }
@@ -268,84 +279,191 @@ const GameCanvas: React.FC = () => {
 
         animationFrameId = requestAnimationFrame(loop);
         return () => cancelAnimationFrame(animationFrameId);
-    }, [gameState, activePowerUp]); // activePowerUp dependency ensures render updates immediately
+    }, [gameState, activePowerUp]);
+
+    // Helpers for UI
+    const getDifficultyLevel = () => Math.min(Math.floor(score / 500) + 1, 10);
+    const difficultyPercentage = (getDifficultyLevel() / 10) * 100;
 
     return (
-        <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white font-mono">
-            {/* Header */}
-            <div className="mb-4 flex gap-8 items-center z-10">
-                <div className="flex items-center gap-2">
-                    <Trophy className="w-5 h-5 text-yellow-400" />
-                    <span className="text-xl">HI: {highScore}</span>
-                </div>
-                <div className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-purple-500 drop-shadow-[0_0_10px_rgba(0,255,255,0.5)]">
-                    NEON SNAKE
-                </div>
-                <div className="flex items-center gap-2 text-gray-400">
-                    <Zap className="w-5 h-5" />
-                    <span className="text-xl">SCORE: {score}</span>
-                </div>
-            </div>
-
-            {/* Power Up Indicators */}
-            <div className="flex gap-4 mb-4 h-8">
-                {activePowerUp === 'GHOST' && (
-                    <div className="flex items-center gap-2 text-blue-400 animate-pulse bg-blue-900/30 px-3 py-1 rounded-full border border-blue-500/50">
-                        <Ghost className="w-4 h-4" /> GHOST MODE (NO CLIP)
-                    </div>
-                )}
-                {activePowerUp === 'WRAP' && (
-                    <div className="flex items-center gap-2 text-pink-400 animate-pulse bg-pink-900/30 px-3 py-1 rounded-full border border-pink-500/50">
-                        <Globe className="w-4 h-4" /> WARP MODE (WALL PASS)
-                    </div>
-                )}
-            </div>
-
-            {/* Game Container */}
-            <div className={`relative group transition-all duration-300 ${activePowerUp === 'GHOST' ? 'shadow-[0_0_30px_rgba(59,130,246,0.5)]' : activePowerUp === 'WRAP' ? 'shadow-[0_0_30px_rgba(236,72,153,0.5)]' : ''}`}>
-                <canvas
-                    ref={canvasRef}
-                    width={GRID_WIDTH * CELL_SIZE}
-                    height={GRID_HEIGHT * CELL_SIZE}
-                    className="border-4 border-gray-800 rounded-lg shadow-[0_0_20px_rgba(0,0,0,0.8)] bg-black/50 backdrop-blur-sm"
-                />
+        <div className="min-h-screen bg-[#020604] text-emerald-50 font-mono p-4 lg:p-12 flex items-center justify-center">
+            
+            {/* Main Dashboard Grid */}
+            <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-8">
                 
-                {/* Overlays */}
-                {gameState === 'START' && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 rounded-lg">
-                        <h1 className="text-5xl font-bold mb-4 text-cyan-400 animate-pulse">PRESS START</h1>
-                        <button 
-                            onClick={resetGame}
-                            className="px-8 py-3 bg-cyan-600 hover:bg-cyan-500 text-black font-bold rounded shadow-[0_0_15px_#06b6d4] transition-all transform hover:scale-105"
+                {/* LEFT: Game Display (colspan 2) */}
+                <div className="lg:col-span-2 space-y-4">
+                    {/* Header Info */}
+                    <div className="flex justify-between items-end border-b border-emerald-900/50 pb-2">
+                        <div>
+                            <div className="flex items-center gap-2 text-emerald-500 mb-1">
+                                <Activity className="w-4 h-4" />
+                                <span className="text-xs tracking-widest text-emerald-600 font-bold">SESSION ACTIVE | LEVEL {getDifficultyLevel().toString().padStart(2, '0')}</span>
+                            </div>
+                            <h1 className="text-3xl font-black italic tracking-tighter text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]">
+                                NEON_SNAKE
+                            </h1>
+                        </div>
+                        <div className="flex gap-4 text-xs text-emerald-700 font-bold">
+                            <span>FPS: 60</span> 
+                            <span>PING: 12ms</span> 
+                        </div>
+                    </div>
+
+                    {/* Canvas Container */}
+                    <div className="relative group rounded-xl overflow-hidden border border-emerald-900 bg-[#020604] shadow-[0_0_50px_rgba(16,185,129,0.05)]">
+                        <canvas
+                            ref={canvasRef}
+                            width={GRID_WIDTH * CELL_SIZE}
+                            height={GRID_HEIGHT * CELL_SIZE}
+                            className="w-full h-auto block opacity-90"
+                        />
+                        
+                        {/* Scanline Overlay */}
+                        <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] z-10 pointer-events-none bg-[length:100%_2px,3px_100%] opacity-20"></div>
+
+                        {/* Start/Paused Screen Overlay */}
+                        {(gameState === 'START' || gameState === 'PAUSED') && (
+                            <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-20 backdrop-blur-[2px]">
+                                <button 
+                                    onClick={gameState === 'START' ? resetGame : togglePause}
+                                    className="group relative px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-black font-black uppercase tracking-wider text-xl transition-all skew-x-[-10deg] hover:scale-105"
+                                >
+                                    <div className="skew-x-[10deg] flex items-center gap-3">
+                                        <Play className="fill-current w-6 h-6" />
+                                        {gameState === 'START' ? 'INITIALIZE' : 'RESUME SESSION'}
+                                    </div>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Controls Hint */}
+                    <div className="flex justify-between text-xs text-emerald-800 uppercase font-bold tracking-widest">
+                        <div className="flex gap-4">
+                            <span>↹ ARROWS TO MOVE</span>
+                            <span>␣ SPACE TO PAUSE</span>
+                        </div>
+                        <div className="flex gap-4">
+                             {/* Active Powerups Status Display */}
+                             <span className={activePowerUp === 'GHOST' ? 'text-blue-400 animate-pulse' : 'opacity-20'}>GHOST_MODE</span>
+                             <span className={activePowerUp === 'WRAP' ? 'text-pink-400 animate-pulse' : 'opacity-20'}>WARP_MODE</span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* RIGHT: Stats Dashboard (colspan 1) */}
+                <div className="flex flex-col gap-4">
+                    
+                    {/* Score Card */}
+                    <div className="bg-emerald-950/30 border border-emerald-900/50 p-6 rounded-lg relative overflow-hidden group hover:border-emerald-500/50 transition-colors">
+                        <span className="text-xs font-bold text-emerald-700 tracking-widest uppercase mb-2 block">Current Score</span>
+                        <div className="text-5xl font-black text-emerald-400 tabular-nums tracking-tight drop-shadow-[0_0_15px_rgba(52,211,153,0.4)]">
+                            {score.toLocaleString()}
+                        </div>
+                        <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Activity size={64} />
+                        </div>
+                    </div>
+
+                    {/* High Score & Level */}
+                    <div className="grid grid-cols-1 gap-4">
+                        <div className="bg-emerald-950/30 border border-emerald-900/50 p-4 rounded-lg flex justify-between items-center">
+                            <div>
+                                <span className="text-xs font-bold text-emerald-700 tracking-widest uppercase mb-1 block">Best Record</span>
+                                <div className="text-2xl font-bold text-emerald-200 tabular-nums">{highScore.toLocaleString()}</div>
+                            </div>
+                            <Trophy className="text-emerald-600" size={24} />
+                        </div>
+
+                        {/* Level Progress */}
+                        <div className="bg-emerald-950/30 border border-emerald-900/50 p-4 rounded-lg">
+                            <div className="flex justify-between text-xs font-bold text-emerald-700 mb-2">
+                                <span>LEVEL DIFFICULTY</span>
+                                <span>LVL.{getDifficultyLevel().toString().padStart(2, '0')}</span>
+                            </div>
+                            <div className="h-2 bg-emerald-950 rounded-full overflow-hidden">
+                                <div 
+                                    className="h-full bg-emerald-500 shadow-[0_0_10px_#10b981] transition-all duration-500 ease-out"
+                                    style={{ width: `${difficultyPercentage}%` }}
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="mt-auto space-y-3">
+                         <button 
+                            onClick={gameState === 'PLAYING' ? togglePause : resetGame}
+                            className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-black uppercase rounded text-sm tracking-widest transition-all hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] flex items-center justify-center gap-2"
                         >
-                            INITIATE PROTOCOL
+                            {gameState === 'PLAYING' ? <Pause size={16} /> : <Play size={16} />}
+                            {gameState === 'PLAYING' ? 'PAUSE GAME' : 'START GAME'}
+                        </button>
+                        
+                        <button className="w-full py-3 bg-emerald-950/50 border border-emerald-900 hover:bg-emerald-900/50 text-emerald-400 font-bold uppercase rounded text-xs tracking-widest transition-all flex items-center justify-center gap-2">
+                            <Settings size={14} /> SYSTEM SETTINGS
                         </button>
                     </div>
-                )}
+                </div>
+            </div>
 
-                {gameState === 'GAME_OVER' && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 rounded-lg z-20">
-                        <h2 className="text-5xl font-bold text-red-500 mb-2 glitch-text">SYSTEM FAILURE</h2>
-                        <p className="text-xl mb-6 text-gray-300">SCORE: {score}</p>
-                        <button 
-                            onClick={resetGame}
-                            className="px-8 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded shadow-[0_0_15px_#9333ea] transition-all transform hover:scale-105"
-                        >
-                            REBOOT
-                        </button>
+            {/* Game Over Modal Overlay */}
+            {gameState === 'GAME_OVER' && (
+                <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="w-full max-w-md bg-[#0a0f0d] border border-red-900/50 rounded-2xl p-8 relative overflow-hidden shadow-[0_0_50px_rgba(220,38,38,0.2)]">
+                        {/* Red Glow Effect */}
+                        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-red-600 blur-[20px]"></div>
+                        
+                        <div className="text-center mb-8">
+                            <h2 className="text-5xl font-black italic text-red-600 drop-shadow-[0_0_10px_rgba(220,38,38,0.8)] mb-2 animate-pulse glitch-text">
+                                GAME OVER
+                            </h2>
+                            <p className="text-red-900/80 font-bold tracking-widest text-xs uppercase">Your snake hit a wall!</p>
+                        </div>
+
+                        {/* Score Comparison */}
+                        <div className="grid grid-cols-2 gap-4 mb-8">
+                            <div className="bg-red-950/20 border border-red-900/30 p-4 rounded-lg text-center">
+                                <div className="text-xs text-red-700 font-bold uppercase mb-1">Final Score</div>
+                                <div className="text-3xl font-black text-red-400">{score}</div>
+                            </div>
+                            <div className="bg-emerald-950/20 border border-emerald-900/30 p-4 rounded-lg text-center">
+                                <div className="text-xs text-emerald-700 font-bold uppercase mb-1">Your Rank</div>
+                                <div className="text-3xl font-black text-emerald-400">#04</div>
+                            </div>
+                        </div>
+
+                        {/* Mock Leaderboard */}
+                        <div className="mb-8 space-y-2">
+                            <div className="text-xs font-bold text-gray-600 uppercase mb-2">Top Scores</div>
+                            {MOCK_LEADER_BOARD.map((entry, i) => (
+                                <div key={i} className="flex justify-between text-sm py-2 border-b border-white/5 text-gray-400">
+                                    <span>{i + 1}. {entry.name}</span>
+                                    <span className="font-mono text-emerald-600">{entry.score}</span>
+                                </div>
+                            ))}
+                            <div className="flex justify-between text-sm py-2 bg-white/5 rounded px-2 text-white font-bold">
+                                <span>3. CURRENT_USER</span>
+                                <span className="font-mono text-emerald-400">{score}</span>
+                            </div>
+                        </div>
+
+                        {/* Footer Controls */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <button 
+                                onClick={resetGame}
+                                className="py-3 bg-emerald-600 hover:bg-emerald-500 text-black font-bold uppercase rounded text-sm transition-colors flex items-center justify-center gap-2"
+                            >
+                                <RotateCcw size={16} /> Play Again
+                            </button>
+                            <button className="py-3 bg-white/5 hover:bg-white/10 text-gray-400 font-bold uppercase rounded text-sm transition-colors border border-white/10">
+                                Main Menu
+                            </button>
+                        </div>
                     </div>
-                )}
-            </div>
-
-             {/* Helper Text */}
-             <div className="mt-6 flex gap-6 text-sm text-gray-500">
-                <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full bg-blue-500 shadow-[0_0_10px_#3b82f6]"></span> GHOST (Pass Self)
                 </div>
-                <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full bg-pink-500 shadow-[0_0_10px_#ec4899]"></span> WARP (Pass Walls)
-                </div>
-            </div>
+            )}
         </div>
     );
 };
